@@ -3,19 +3,48 @@ from aiogram.filters import CommandStart, Command
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from ..config import settings
 from ..db import Subject, Section, Item, Attachment, get_setting
 from ..utils import esc, normalize
 
 router=Router()
 
-def subjects_kb(rows):
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"{s.emoji} {s.name_ar}",callback_data=f"sub:{s.id}")] for s in rows]+[[InlineKeyboardButton(text="🔎 بحث",callback_data="search")]])
+def _two_columns(buttons):
+    rows=[]
+    for i in range(0,len(buttons),2):
+        rows.append(buttons[i:i+2])
+    return rows
+
+def subjects_kb(rows, developer=False):
+    buttons=[InlineKeyboardButton(text=f"{s.emoji} {s.name_ar}",callback_data=f"sub:{s.id}") for s in rows]
+    keyboard=_two_columns(buttons)
+    keyboard.append([InlineKeyboardButton(text="🔎 بحث",callback_data="search")])
+    if developer:
+        keyboard.append([InlineKeyboardButton(text="🛠 لوحة المطوّر",callback_data="adm:panel")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 @router.message(CommandStart())
-@router.message(Command("menu"))
 async def start(m: Message, session: AsyncSession):
+    # OWNER_IDS is the source of truth for developer recognition.
+    is_developer = m.from_user.id in settings.owner_ids
+    if is_developer:
+        # Show the full developer panel immediately on /start.
+        from .admin import panel_kb
+        await m.answer(
+            "🛠 <b>مرحباً بك أيها المطوّر</b>\n\n"
+            "تم التعرف عليك تلقائياً. هذه لوحة التحكم الكاملة:",
+            reply_markup=panel_kb(),
+        )
+        return
+    await show_home(m, session)
+
+@router.message(Command("menu"))
+async def menu(m: Message, session: AsyncSession):
+    await show_home(m, session)
+
+async def show_home(m: Message, session: AsyncSession):
     rows=(await session.scalars(select(Subject).where(Subject.is_active==True).order_by(Subject.sort_order,Subject.id))).all()
-    await m.answer("🎓 <b>أكاديمية الأمن السيبراني</b>\n\nاختر المادة التي تريدها:",reply_markup=subjects_kb(rows))
+    await m.answer("🎓 <b>المواد الدراسية 📚</b>\n\nاختر المادة:",reply_markup=subjects_kb(rows, m.from_user.id in settings.owner_ids))
 
 @router.callback_query(F.data=="check_sub")
 async def check_sub(cb: CallbackQuery, session: AsyncSession):
@@ -24,7 +53,7 @@ async def check_sub(cb: CallbackQuery, session: AsyncSession):
         member=await cb.bot.get_chat_member(int(channel),cb.from_user.id)
         if member.status in {"member","administrator","creator"} or (member.status=="restricted" and getattr(member,"is_member",False)):
             await cb.answer("تم التحقق ✅")
-            await start(cb.message,session)
+            await show_home(cb.message,session)
         else: await cb.answer("لم يتم العثور على اشتراكك بعد",show_alert=True)
     except Exception: await cb.answer("تعذر التحقق. تأكد أن البوت مشرف بالقناة.",show_alert=True)
 
@@ -43,7 +72,8 @@ async def mode(cb: CallbackQuery, session: AsyncSession):
 
 async def show_sections(event,sid,mode,session):
     rows=(await session.scalars(select(Section).where(Section.slug!="practical").order_by(Section.sort_order,Section.id))).all()
-    kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"{x.emoji} {x.name_ar}",callback_data=f"sec:{sid}:{mode}:{x.id}")] for x in rows]+[[InlineKeyboardButton(text="⬅️ المواد",callback_data="home")]])
+    buttons=[InlineKeyboardButton(text=f"{x.emoji} {x.name_ar}",callback_data=f"sec:{sid}:{mode}:{x.id}") for x in rows]
+    kb=InlineKeyboardMarkup(inline_keyboard=_two_columns(buttons)+[[InlineKeyboardButton(text="⬅️ المواد",callback_data="home")]])
     text="اختر القسم:" if rows else "لا توجد أقسام بعد."
     if isinstance(event,CallbackQuery): await event.message.edit_text(text,reply_markup=kb); await event.answer()
 
@@ -54,7 +84,8 @@ async def section(cb: CallbackQuery, session: AsyncSession):
     if mode!="general": q=q.where(Item.study_mode==mode)
     rows=(await session.scalars(q.order_by(Item.sort_order,Item.id))).all()
     if not rows:return await cb.answer("لا توجد محاضرات هنا بعد",show_alert=True)
-    kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=("⭐ " if x.is_important else "📄 ")+x.title[:55],callback_data=f"item:{x.id}")] for x in rows]+[[InlineKeyboardButton(text="⬅️ رجوع",callback_data=f"sub:{sid}")]])
+    buttons=[InlineKeyboardButton(text=("⭐ " if x.is_important else "📄 ")+x.title[:55],callback_data=f"item:{x.id}") for x in rows]
+    kb=InlineKeyboardMarkup(inline_keyboard=_two_columns(buttons)+[[InlineKeyboardButton(text="⬅️ رجوع",callback_data=f"sub:{sid}")]])
     await cb.message.edit_text("📚 <b>المحتوى</b>",reply_markup=kb); await cb.answer()
 
 @router.callback_query(F.data.startswith("item:"))
@@ -75,7 +106,7 @@ async def item(cb: CallbackQuery,session:AsyncSession):
     await cb.answer()
 
 @router.callback_query(F.data=="home")
-async def home(cb: CallbackQuery,session:AsyncSession): await start(cb.message,session)
+async def home(cb: CallbackQuery,session:AsyncSession): await show_home(cb.message,session)
 
 @router.message(Command("search"))
 async def search(m:Message,session:AsyncSession):
