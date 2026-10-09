@@ -18,32 +18,48 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     await init_db()
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML, link_preview_is_disabled=True))
-    runtime["bot_username"] = (await bot.get_me()).username or ""
-    dp = Dispatcher(storage=MemoryStorage())
-    dp.update.outer_middleware(DbMiddleware())
-    for observer in (dp.message, dp.callback_query):
-        observer.outer_middleware(ThrottleMiddleware())
-        observer.outer_middleware(MembershipMiddleware())
-    dp.include_router(admin.router)
-    dp.include_router(user.router)
-    public_commands = [BotCommand(command="menu", description="القائمة الرئيسية"), BotCommand(command="search", description="بحث في المحاضرات")]
-    await bot.set_my_commands(public_commands, scope=BotCommandScopeDefault())
-    owner_commands = public_commands + [BotCommand(command="adminpanel", description="لوحة المطوّر"), BotCommand(command="broadcast", description="إذاعة رسالة للمستخدمين")]
-    for owner_id in settings.owner_ids:
-        try:
-            await bot.set_my_commands(owner_commands, scope=BotCommandScopeChat(chat_id=owner_id))
-        except Exception:
-            logging.warning("تعذّر ضبط قائمة أوامر المطوّر للحساب %s", owner_id)
-    backup_task = asyncio.create_task(backup_loop(bot), name="daily-backup")
-    logging.info("Bot @%s started", runtime["bot_username"])
     try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-    finally:
-        backup_task.cancel()
+        me = await bot.get_me()
+        runtime["bot_username"] = me.username or ""
+        dp = Dispatcher(storage=MemoryStorage())
+
+        # Middlewares must be attached to message/callback observers, not dp.update.
+        # Message/CallbackQuery provide from_user and are handled by our middleware.
+        for observer in (dp.message, dp.callback_query):
+            observer.outer_middleware(DbMiddleware())
+            observer.outer_middleware(ThrottleMiddleware())
+            observer.outer_middleware(MembershipMiddleware())
+
+        dp.include_router(admin.router)
+        dp.include_router(user.router)
+
+        public_commands = [
+            BotCommand(command="start", description="بدء استخدام الأكاديمية"),
+            BotCommand(command="menu", description="القائمة الرئيسية"),
+            BotCommand(command="search", description="بحث في المحاضرات"),
+        ]
+        await bot.set_my_commands(public_commands, scope=BotCommandScopeDefault())
+        owner_commands = public_commands + [
+            BotCommand(command="adminpanel", description="لوحة المطوّر"),
+            BotCommand(command="broadcast", description="إذاعة رسالة للمستخدمين"),
+        ]
+        for owner_id in settings.owner_ids:
+            try:
+                await bot.set_my_commands(owner_commands, scope=BotCommandScopeChat(chat_id=owner_id))
+            except Exception:
+                logging.exception("تعذّر ضبط قائمة أوامر المطوّر للحساب %s", owner_id)
+
+        backup_task = asyncio.create_task(backup_loop(bot), name="daily-backup")
+        logging.info("Bot @%s started; polling Telegram updates", runtime["bot_username"])
         try:
-            await backup_task
-        except asyncio.CancelledError:
-            pass
+            await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        finally:
+            backup_task.cancel()
+            try:
+                await backup_task
+            except asyncio.CancelledError:
+                pass
+    finally:
         await bot.session.close()
 
 
