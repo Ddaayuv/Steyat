@@ -15,9 +15,12 @@ def owner(uid): return uid in settings.owner_ids
 
 def panel_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 الإحصائيات",callback_data="adm:stats"),InlineKeyboardButton(text="➕ إضافة محتوى",callback_data="adm:add")],
-        [InlineKeyboardButton(text="📚 المواد",callback_data="adm:subjects"),InlineKeyboardButton(text="⚙️ الإعدادات",callback_data="adm:settings")],
-        [InlineKeyboardButton(text="📢 إذاعة",callback_data="adm:broadcast")]])
+        [InlineKeyboardButton(text="📊 الإحصائيات",callback_data="adm:stats"),InlineKeyboardButton(text="👥 المستخدمون",callback_data="adm:stats")],
+        [InlineKeyboardButton(text="➕ إضافة محتوى",callback_data="adm:add"),InlineKeyboardButton(text="📚 إدارة المواد",callback_data="adm:subjects")],
+        [InlineKeyboardButton(text="📢 إذاعة",callback_data="adm:broadcast"),InlineKeyboardButton(text="⚙️ الإعدادات",callback_data="adm:settings")],
+        [InlineKeyboardButton(text="🔒 الاشتراك الإجباري",callback_data="adm:forcesub"),InlineKeyboardButton(text="🔔 إشعارات الأعضاء",callback_data="adm:alerts")],
+        [InlineKeyboardButton(text="📖 عرض المواد",callback_data="adm:home")]
+    ])
 
 class AddContent(StatesGroup):
     meta=State(); content=State()
@@ -26,32 +29,61 @@ class Broadcast(StatesGroup): content=State()
 @router.message(Command("adminpanel"))
 async def adminpanel(m:Message,session:AsyncSession):
     if not owner(m.from_user.id): return await m.answer("⛔ هذا الأمر للمطوّر فقط.")
-    await m.answer("🛠 <b>لوحة المطوّر</b>\n\nاختر العملية:",reply_markup=panel_kb())
+    await m.answer("🛠 <b>لوحة تحكم المطوّر</b>\n\n👑 تم التعرف عليك كمطوّر.\nاختر ما تريد إدارته:",reply_markup=panel_kb())
 
 @router.callback_query(F.data=="adm:stats")
 async def stats(cb:CallbackQuery,session:AsyncSession):
     if not owner(cb.from_user.id): return await cb.answer("ممنوع",show_alert=True)
     users=await session.scalar(select(func.count(User.id))) or 0; subjects=await session.scalar(select(func.count(Subject.id))) or 0; items=await session.scalar(select(func.count(Item.id))) or 0
-    await cb.message.edit_text(f"📊 <b>الإحصائيات</b>\n👥 المستخدمون: {users}\n📚 المواد: {subjects}\n📦 المحتوى: {items}",reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ اللوحة",callback_data="adm:panel")]])); await cb.answer()
+    active=await session.scalar(select(func.count(User.id)).where(User.is_active==True)) or 0
+    await cb.message.edit_text(f"📊 <b>إحصائيات الأكاديمية</b>\n\n👥 إجمالي المستخدمين: {users}\n🟢 المستخدمون النشطون: {active}\n📚 المواد: {subjects}\n📦 المحتوى: {items}",reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ لوحة المطوّر",callback_data="adm:panel")]])); await cb.answer()
 
 @router.callback_query(F.data=="adm:subjects")
 async def subjects(cb:CallbackQuery,session:AsyncSession):
     if not owner(cb.from_user.id): return await cb.answer("ممنوع",show_alert=True)
     rows=(await session.scalars(select(Subject).order_by(Subject.sort_order,Subject.id))).all()
-    kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"{x.emoji} {x.name_ar} · {'عملي+نظري' if x.has_practical else 'قسم واحد'}",callback_data=f"adm:toggle:{x.id}")] for x in rows]+[[InlineKeyboardButton(text="➕ إضافة مادة",callback_data="adm:addsubject")],[InlineKeyboardButton(text="⬅️ اللوحة",callback_data="adm:panel")]])
-    await cb.message.edit_text("📚 <b>إدارة المواد</b>\nاضغط على المادة لتبديل العملي/النظري:",reply_markup=kb); await cb.answer()
+    buttons=[InlineKeyboardButton(text=f"{x.emoji} {x.name_ar}",callback_data=f"adm:toggle:{x.id}") for x in rows]
+    keyboard=[]
+    for i in range(0,len(buttons),2): keyboard.append(buttons[i:i+2])
+    keyboard += [[InlineKeyboardButton(text="➕ إضافة مادة",callback_data="adm:addsubject")],[InlineKeyboardButton(text="⬅️ اللوحة",callback_data="adm:panel")]]
+    await cb.message.edit_text("📚 <b>إدارة المواد</b>\n\nاضغط على المادة لتبديل وضع العملي/النظري:",reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard)); await cb.answer()
 
 @router.callback_query(F.data.startswith("adm:toggle:"))
 async def toggle(cb:CallbackQuery,session:AsyncSession):
     if not owner(cb.from_user.id): return await cb.answer("ممنوع",show_alert=True)
     s=await session.get(Subject,int(cb.data.split(":")[2])); s.has_practical=not s.has_practical; await cb.answer("تم التحديث"); await subjects(cb,session)
 
+@router.callback_query(F.data=="adm:forcesub")
+async def force_sub_control(cb:CallbackQuery,session:AsyncSession):
+    if not owner(cb.from_user.id): return await cb.answer("ممنوع",show_alert=True)
+    current=await setting_enabled(session,"force_sub")
+    new_value=not current
+    await set_setting(session,"force_sub",str(new_value).lower())
+    await cb.answer("تم التفعيل" if new_value else "تم الإيقاف",show_alert=True)
+    await cb.message.edit_text(f"🔒 <b>الاشتراك الإجباري</b>\n\nالحالة الآن: {'🟢 مفعّل' if new_value else '🔴 متوقف'}\n\nلتحديد القناة استخدم:\n<code>/setchannel @channel | https://t.me/channel</code>",reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔄 تبديل الحالة",callback_data="adm:forcesub"),InlineKeyboardButton(text="⬅️ اللوحة",callback_data="adm:panel")]]))
+
+@router.callback_query(F.data=="adm:alerts")
+async def alerts_control(cb:CallbackQuery,session:AsyncSession):
+    if not owner(cb.from_user.id): return await cb.answer("ممنوع",show_alert=True)
+    current=await setting_enabled(session,"new_user_alerts",True)
+    new_value=not current
+    await set_setting(session,"new_user_alerts",str(new_value).lower())
+    await cb.answer("تم التفعيل" if new_value else "تم الإيقاف",show_alert=True)
+    await cb.message.edit_text(f"🔔 <b>إشعارات الأعضاء الجدد</b>\n\nالحالة الآن: {'🟢 مفعّلة' if new_value else '🔴 متوقفة'}",reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔄 تبديل الحالة",callback_data="adm:alerts"),InlineKeyboardButton(text="⬅️ اللوحة",callback_data="adm:panel")]]))
+
+@router.callback_query(F.data=="adm:home")
+async def admin_home(cb:CallbackQuery,session:AsyncSession):
+    if not owner(cb.from_user.id): return await cb.answer("ممنوع",show_alert=True)
+    from .user import show_home
+    await show_home(cb.message,session)
+    await cb.answer()
+
 @router.message(Command("addsubject"))
 async def addsubject(m:Message,command:CommandObject,session:AsyncSession):
     if not owner(m.from_user.id): return
     p=[x.strip() for x in (command.args or "").split("|")]
     if not p or not p[0]: return await m.answer("الاستخدام: <code>/addsubject اسم المادة | الاسم الإنكليزي | 🧪</code>")
-    name=p[0]; practical=len(p)>1 and p[-1].lower() in {"عملي","نعم","true","1"};
+    name=p[0]; practical=len(p)>1 and p[-1].lower() in {"عملي","نعم","true","1"}
     if practical:p.pop()
     emoji=p[2] if len(p)>2 else "📘"; en=p[1] if len(p)>1 else ""
     slug="".join(c.lower() if c.isalnum() else "-" for c in (en or name)).strip("-") or "subject"
@@ -152,5 +184,5 @@ async def broadcast_send(m:Message,state:FSMContext,session:AsyncSession):
 
 @router.callback_query(F.data=="adm:panel")
 async def panel_cb(cb:CallbackQuery,session:AsyncSession):
-    if owner(cb.from_user.id): await cb.message.edit_text("🛠 <b>لوحة المطوّر</b>",reply_markup=panel_kb())
+    if owner(cb.from_user.id): await cb.message.edit_text("🛠 <b>لوحة تحكم المطوّر</b>\n\nاختر ما تريد إدارته:",reply_markup=panel_kb())
     await cb.answer()
