@@ -57,7 +57,7 @@ async def search_state(m,state,session):
     await run_search(m,session,term); await state.clear()
 async def run_search(m,session,term):
     needle=normalize(term)
-    rows=(await session.scalars(select(Item).where(Item.is_published.is_(True),Item.search_text.contains(needle)).order_by(Item.id.desc()).limit(15))).all()
+    rows=(await session.scalars(select(Item).join(Section,Item.section_id==Section.id).where(Item.is_published.is_(True),Item.search_text.contains(needle),Section.slug.in_(("lectures","files","questions","practical"))).order_by(Item.id.desc()).limit(15))).all()
     if not rows:return await m.answer("لم أجد نتائج مطابقة. جرّب كلمة أقصر.")
     await m.answer("🔎 <b>نتائج البحث</b>",reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"📄 {x.title[:50]}",callback_data=f"item:{x.id}")] for x in rows]))
 @router.callback_query(F.data.startswith("sub:"))
@@ -75,19 +75,28 @@ async def mode(cb,session):
     except Exception:return await cb.answer("الاختيار غير صحيح",show_alert=True)
     await show_sections(cb,sid,study_mode,session)
 async def show_sections(event,sid,study_mode,session):
-    rows=(await session.scalars(select(Section).where(Section.slug!="practical").order_by(Section.sort_order,Section.id))).all()
-    k=_two_columns([InlineKeyboardButton(text=f"{x.emoji} {x.name_ar}",callback_data=f"sec:{sid}:{study_mode}:{x.id}") for x in rows]); k.append([InlineKeyboardButton(text="⬅️ المواد",callback_data="home")])
+    # نظري: المحاضرات + الملفات + الأسئلة
+    # عملي: المحاضرات + الملفات + التطبيقات المستخدمة
+    section_order=("lectures","files","practical") if study_mode=="practical" else ("lectures","files","questions")
+    result=(await session.scalars(select(Section).where(Section.slug.in_(section_order)))).all()
+    by_slug={x.slug:x for x in result}
+    rows=[by_slug[x] for x in section_order if x in by_slug]
+    k=_two_columns([InlineKeyboardButton(text=("🧰 التطبيقات المستخدمة" if x.slug=="practical" else f"{x.emoji} {x.name_ar}"),callback_data=f"sec:{sid}:{study_mode}:{x.id}") for x in rows])
+    k.append([InlineKeyboardButton(text="⬅️ المواد",callback_data="home")])
     await event.message.edit_text("اختر القسم الذي تريد فتحه:",reply_markup=InlineKeyboardMarkup(inline_keyboard=k)); await event.answer()
 @router.callback_query(F.data.startswith("sec:"))
 async def section(cb,session):
     try:_,sid,study_mode,section_id=cb.data.split(":"); sid=int(sid); section_id=int(section_id)
     except Exception:return await cb.answer("الاختيار غير صحيح",show_alert=True)
+    allowed_slugs={"lectures","files","practical"} if study_mode=="practical" else {"lectures","files","questions"}
+    selected=await session.get(Section,section_id)
+    if not selected or selected.slug not in allowed_slugs:return await cb.answer("هذا القسم غير متاح لهذا النوع.",show_alert=True)
     q=select(Item).where(Item.subject_id==sid,Item.section_id==section_id,Item.is_published.is_(True))
     if study_mode!="general":q=q.where(Item.study_mode==study_mode)
     rows=(await session.scalars(q.order_by(Item.sort_order,Item.id))).all()
-    if not rows:return await cb.answer("لا توجد محاضرات بهذا القسم بعد",show_alert=True)
+    if not rows:return await cb.answer("لا يوجد محتوى بهذا القسم بعد",show_alert=True)
     k=[[InlineKeyboardButton(text=("⭐ " if x.is_important else "📄 ")+x.title[:50],callback_data=f"item:{x.id}")] for x in rows]; k.append([InlineKeyboardButton(text="⬅️ رجوع",callback_data=f"sub:{sid}")])
-    await cb.message.edit_text("📚 <b>المحتوى المتاح</b>",reply_markup=InlineKeyboardMarkup(inline_keyboard=k)); await cb.answer()
+    await cb.message.edit_text("📚 <b>المحتوى المتاح</b>\n\nاختر عنوان المحاضرة أو الملف:",reply_markup=InlineKeyboardMarkup(inline_keyboard=k)); await cb.answer()
 @router.callback_query(F.data.startswith("item:"))
 async def item(cb,session):
     try:x=await session.get(Item,int(cb.data.split(":",1)[1]))
