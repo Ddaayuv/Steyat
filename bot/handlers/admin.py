@@ -19,6 +19,7 @@ class AddContent(StatesGroup): subject=State(); mode=State(); section=State(); t
 class AddSubject(StatesGroup): meta=State()
 class Broadcast(StatesGroup): content=State(); confirm=State()
 class EditContent(StatesGroup): values=State()
+class EditSubject(StatesGroup): name=State()
 class DeleteContent(StatesGroup): confirm=State()
 def cancel_kb(): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ إلغاء",callback_data="addflow:cancel")]])
 def upload_kb(n): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=f"✅ حفظ ونشر ({n} مرفق)",callback_data="addflow:finish")],[InlineKeyboardButton(text="❌ إلغاء",callback_data="addflow:cancel")]])
@@ -56,8 +57,39 @@ async def subject_details(cb,session):
     sid=int(cb.data.rsplit(":",1)[1]); s=await session.get(Subject,sid)
     if not s:return await cb.answer("المادة غير موجودة",show_alert=True)
     count=await session.scalar(select(func.count(Item.id)).where(Item.subject_id==sid)) or 0
-    kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔄 تغيير عملي/نظري",callback_data=f"adm:toggle:{sid}")],[InlineKeyboardButton(text="🙈 إخفاء المادة" if s.is_active else "👁 إظهار المادة",callback_data=f"adm:visibility:{sid}")],[InlineKeyboardButton(text=f"📦 المحتوى ({count})",callback_data=f"adm:subjectitems:{sid}")],[InlineKeyboardButton(text="⬅️ المواد",callback_data="adm:subjects")]])
+    kb=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✏️ تغيير اسم المادة",callback_data=f"adm:editname:{sid}")],[InlineKeyboardButton(text="🔄 تغيير عملي/نظري",callback_data=f"adm:toggle:{sid}")],[InlineKeyboardButton(text="🙈 إخفاء المادة" if s.is_active else "👁 إظهار المادة",callback_data=f"adm:visibility:{sid}")],[InlineKeyboardButton(text=f"📦 المحتوى ({count})",callback_data=f"adm:subjectitems:{sid}")],[InlineKeyboardButton(text="⬅️ المواد",callback_data="adm:subjects")]])
     await cb.message.edit_text(f"{s.emoji} <b>{esc(s.name_ar)}</b>\n\nالظهور: {'🟢 ظاهر' if s.is_active else '🔴 مخفي'}\nطريقة الدراسة: {'عملي + نظري' if s.has_practical else 'قسم واحد'}\nالمحتوى: {count}",reply_markup=kb); await cb.answer()
+@router.callback_query(F.data.startswith("adm:editname:"))
+async def edit_subject_name_start(cb,state,session):
+    if not owner(cb.from_user.id): return await cb.answer("ممنوع",show_alert=True)
+    sid=int(cb.data.rsplit(":",1)[1]); subject=await session.get(Subject,sid)
+    if not subject: return await cb.answer("المادة غير موجودة",show_alert=True)
+    await state.set_state(EditSubject.name)
+    await state.update_data(edit_subject_id=sid)
+    await cb.message.answer(f"✏️ أرسل الاسم الجديد للمادة الحالية: <b>{esc(subject.name_ar)}</b>\n\nأرسل /cancel للإلغاء.")
+    await cb.answer()
+
+@router.message(EditSubject.name)
+async def edit_subject_name_save(m,state,session):
+    if not owner(m.from_user.id): return
+    new_name=(m.text or "").strip()
+    if new_name == "/cancel":
+        await state.clear()
+        return await m.answer("تم إلغاء تغيير اسم المادة.")
+    if not new_name or len(new_name)>100:
+        return await m.answer("أرسل اسماً من 1 إلى 100 حرف.")
+    data=await state.get_data(); sid=int(data.get("edit_subject_id",0))
+    subject=await session.get(Subject,sid)
+    if not subject:
+        await state.clear()
+        return await m.answer("المادة غير موجودة؛ لم يتم تغيير شيء.")
+    old_name=subject.name_ar
+    subject.name_ar=new_name
+    await audit(session,m.from_user.id,"rename_subject",f"{old_name} -> {new_name}")
+    await session.commit()
+    await state.clear()
+    await m.answer(f"✅ تم تغيير اسم المادة إلى: <b>{esc(new_name)}</b>\n\nاحتفظنا بنفس معرّف المادة، لذلك تبقى المحاضرات والمرفقات مرتبطة بها.")
+
 @router.callback_query(F.data.startswith("adm:toggle:"))
 async def toggle(cb,session):
     if not owner(cb.from_user.id):return await cb.answer("ممنوع",show_alert=True)
