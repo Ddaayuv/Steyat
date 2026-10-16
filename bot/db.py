@@ -164,6 +164,25 @@ Session = async_sessionmaker(engine, expire_on_commit=False)
 SECTIONS = [("lectures","المحاضرات","🎥","محاضرات,محاضره,فيديو,lectures,lecture,video"),("notes","الملاحظات","📝","ملاحظات,ملخصات,ملخص,notes,summary"),("practical","العملي","🧪","عملي,lab,labs,practical"),("files","الملفات","📄","ملفات,files,file,pdf"),("questions","الأسئلة","❓","اسئله,اسئلة,مراجعه,questions,quiz"),("key_points","أهم النقاط","⭐","مهم,اهم النقاط,important"),("resources","المصادر","📚","مصادر,مراجع,resources")]
 SUBJECTS = [("linux","أساسيات Linux","Linux Basics","🐧","لينكس,لينوكس,linux",True),("cyber-basics","أساسيات الأمن السيبراني","Cybersecurity Basics","🛡","الامن السيبراني,امن سيبراني,cybersecurity,security",True),("crypto","أساسيات التشفير","Cryptography Basics","🔐","التشفير,اساسيات التشفير,cryptography,crypto",False),("web-dev","برمجة المواقع","Web Development","🌐","ويب,web,برمجه مواقع",True),("statistics","الإحصاء","Statistics","📊","الاحصاء,احتمالية,احتمالات,الاحصاء الاحتمالي,statistics,stats",False),("pentest","اختبار الاختراق","Penetration Testing","🎯","pentest,penetration testing,اختراق",True),("arabic","اللغة العربية","Arabic","📖","عربي,العربيه,arabic",False),("networks","أساسيات الشبكات","Networking Basics","📡","الشبكات,شبكات,networking,network",True),("english","اللغة الإنكليزية","English","🔤","الانجليزيه,انجليزي,انكليزي,english",False),("ethics","الأخلاقيات","Ethics","⚖️","اخلاقيات,اخلاقيات مهنية,المهنة,ethics",False),("python","Python","Python","🐍","بايثون,بايثن,البايثون للامن السيبراني,python",True),("human-rights","حقوق الإنسان","Human Rights","🕊","حقوق الانسان,human rights",False)]
 DEFAULT_SETTINGS={"channel_id":str(settings.channel_id or ""),"channel_link":settings.channel_link,"force_sub":str(settings.require_membership).lower(),"new_user_alerts":"true","announce":str(settings.announce).lower()}
+def is_linux_basics_subject(subject: Subject) -> bool:
+    """Return True only for the Linux Basics subject and its practical/theory variants."""
+    slug_key = key(getattr(subject, "slug", "") or "")
+    arabic_key = key(getattr(subject, "name_ar", "") or "")
+    english_key = key(getattr(subject, "name_en", "") or "")
+    arabic_names = {
+        key("أساسيات Linux"),
+        key("أساسيات لينكس"),
+        key("أساسيات Linux العملي"),
+        key("أساسيات Linux النظري"),
+        key("أساسيات لينكس العملي"),
+        key("أساسيات لينكس النظري"),
+        key("أساسيات Linux عملي ونظري"),
+        key("أساسيات لينكس عملي ونظري"),
+    }
+    english_names = {key("Linux Basics"), key("Linux Basics Practical"), key("Linux Basics Theory")}
+    return slug_key == "linux" or arabic_key in arabic_names or english_key in english_names
+
+
 def _sync_migrations(conn):
     inspector=inspect(conn); subject_columns={c["name"] for c in inspector.get_columns("subjects")} if inspector.has_table("subjects") else set(); item_columns={c["name"] for c in inspector.get_columns("items")} if inspector.has_table("items") else set(); add_practical="has_practical" not in subject_columns; add_mode="study_mode" not in item_columns
     if add_practical: conn.execute(text(f"ALTER TABLE subjects ADD COLUMN has_practical BOOLEAN NOT NULL DEFAULT {'0' if conn.dialect.name=='sqlite' else 'FALSE'}"))
@@ -188,6 +207,32 @@ async def init_db():
         if practical_section_id and lecture_section_id: await s.execute(update(Item).where(Item.section_id==practical_section_id).values(section_id=lecture_section_id))
         for k,v in DEFAULT_SETTINGS.items():
             if await s.get(BotSetting,k) is None: s.add(BotSetting(key=k,value=v))
+
+        # One-time cleanup requested for Linux Basics: permanently remove only its
+        # items in the Files and Questions sections (and their attached file records).
+        # All users, subjects, lecture items, and other subjects are left untouched.
+        cleanup_key = "migration:linux_files_questions_deleted_v1"
+        if await s.get(BotSetting, cleanup_key) is None:
+            subjects = (await s.scalars(select(Subject))).all()
+            linux_subject_ids = [x.id for x in subjects if is_linux_basics_subject(x)]
+            target_sections = (await s.scalars(
+                select(Section).where(Section.slug.in_(("files", "questions")))
+            )).all()
+            target_section_slugs = {x.slug for x in target_sections}
+            if linux_subject_ids and target_section_slugs == {"files", "questions"}:
+                old_content = (await s.scalars(
+                    select(Item).where(
+                        Item.subject_id.in_(linux_subject_ids),
+                        Item.section_id.in_([x.id for x in target_sections]),
+                    )
+                )).all()
+                deleted_count = len(old_content)
+                for content_item in old_content:
+                    await s.delete(content_item)
+                s.add(BotSetting(
+                    key=cleanup_key,
+                    value=f"completed;deleted_items={deleted_count}",
+                ))
         await s.commit()
 async def touch_user(session,tg_user):
     u=await session.scalar(select(User).where(User.telegram_id==tg_user.id)); now=utcnow()

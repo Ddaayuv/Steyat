@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ..config import settings
-from ..db import Subject, Section, Item, get_setting
+from ..db import Subject, Section, Item, get_setting, is_linux_basics_subject
 from ..utils import esc, normalize
 from ..menu_buttons import build_menu_markup
 
@@ -80,9 +80,13 @@ async def mode(cb,session):
     except Exception:return await cb.answer("الاختيار غير صحيح",show_alert=True)
     await show_sections(cb,sid,study_mode,session)
 async def show_sections(event,sid,study_mode,session):
-    # نظري: المحاضرات + الملفات + الأسئلة
-    # عملي: المحاضرات + الملفات + التطبيقات المستخدمة
-    section_order=("lectures","files","practical") if study_mode=="practical" else ("lectures","files","questions")
+    subject_row = await session.get(Subject, sid)
+    if subject_row and is_linux_basics_subject(subject_row):
+        # Linux Basics: show the single requested section in both theory and practical.
+        section_order = ("lectures",)
+    else:
+        # Keep the original section choices for all other subjects.
+        section_order = ("lectures","files","practical") if study_mode=="practical" else ("lectures","files","questions")
     result=(await session.scalars(select(Section).where(Section.slug.in_(section_order)))).all()
     by_slug={x.slug:x for x in result}
     rows=[by_slug[x] for x in section_order if x in by_slug]
@@ -93,7 +97,12 @@ async def show_sections(event,sid,study_mode,session):
 async def section(cb,session):
     try:_,sid,study_mode,section_id=cb.data.split(":"); sid=int(sid); section_id=int(section_id)
     except Exception:return await cb.answer("الاختيار غير صحيح",show_alert=True)
-    allowed_slugs={"lectures","files","practical"} if study_mode=="practical" else {"lectures","files","questions"}
+    subject_row = await session.get(Subject, sid)
+    if subject_row and is_linux_basics_subject(subject_row):
+        # Reject stale inline buttons for Files/Questions from messages sent before this update.
+        allowed_slugs = {"lectures"}
+    else:
+        allowed_slugs = {"lectures","files","practical"} if study_mode=="practical" else {"lectures","files","questions"}
     selected=await session.get(Section,section_id)
     if not selected or selected.slug not in allowed_slugs:return await cb.answer("هذا القسم غير متاح لهذا النوع.",show_alert=True)
     q=select(Item).where(Item.subject_id==sid,Item.section_id==section_id,Item.is_published.is_(True))
