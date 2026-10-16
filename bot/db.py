@@ -2,7 +2,7 @@ import re
 import time
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import (BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, event, inspect, select, text, update)
+from sqlalchemy import (BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, event, inspect, select, text, update)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from .config import settings
@@ -86,6 +86,61 @@ class BotSetting(Base):
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+class Quiz(Base):
+    __tablename__ = "quizzes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    title: Mapped[str] = mapped_column(String(200), default="اختبار من النص")
+    original_text: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    questions: Mapped[list["QuizQuestion"]] = relationship(lazy="selectin", cascade="all, delete-orphan", order_by="QuizQuestion.number")
+
+
+class QuizQuestion(Base):
+    __tablename__ = "quiz_questions"
+    __table_args__ = (UniqueConstraint("quiz_id", "number", name="uq_quiz_question_number"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    quiz_id: Mapped[int] = mapped_column(ForeignKey("quizzes.id", ondelete="CASCADE"), index=True)
+    number: Mapped[int] = mapped_column(Integer)
+    question: Mapped[str] = mapped_column(Text)
+    options_json: Mapped[str] = mapped_column(Text)
+    correct_option_index: Mapped[int] = mapped_column(Integer)
+
+
+class QuizAttempt(Base):
+    __tablename__ = "quiz_attempts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    quiz_id: Mapped[int] = mapped_column(ForeignKey("quizzes.id", ondelete="CASCADE"), index=True)
+    user_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    total_questions: Mapped[int] = mapped_column(Integer)
+    answered_count: Mapped[int] = mapped_column(Integer, default=0)
+    correct_count: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="active")
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class QuizPoll(Base):
+    __tablename__ = "quiz_polls"
+    __table_args__ = (UniqueConstraint("attempt_id", "question_number", name="uq_attempt_question_poll"),)
+    poll_id: Mapped[str] = mapped_column(String(200), primary_key=True)
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("quiz_attempts.id", ondelete="CASCADE"), index=True)
+    question_number: Mapped[int] = mapped_column(Integer)
+    correct_option_index: Mapped[int] = mapped_column(Integer)
+
+
+class QuizResponse(Base):
+    __tablename__ = "quiz_responses"
+    __table_args__ = (UniqueConstraint("attempt_id", "question_number", name="uq_attempt_question_response"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("quiz_attempts.id", ondelete="CASCADE"), index=True)
+    question_number: Mapped[int] = mapped_column(Integer)
+    selected_option_index: Mapped[int] = mapped_column(Integer)
+    is_correct: Mapped[bool] = mapped_column(Boolean, default=False)
+    answered_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 connect_args = {"timeout": 30} if settings.db_url.startswith("sqlite") else {}
 engine = create_async_engine(settings.db_url, connect_args=connect_args, pool_pre_ping=True)
 if settings.db_url.startswith("sqlite"):
@@ -111,8 +166,11 @@ async def init_db():
         await s.flush()
         if added_practical:
             for slug,*_rest,practical in SUBJECTS: await s.execute(update(Subject).where(Subject.slug==slug).values(has_practical=practical))
-        if added_mode:
-            await s.execute(text("UPDATE items SET study_mode = 'practical' WHERE section_id IN (SELECT id FROM sections WHERE slug = 'practical')")); await s.execute(text("UPDATE items SET study_mode = 'theory' WHERE study_mode = 'general' AND subject_id IN (SELECT id FROM subjects WHERE has_practical = TRUE)")); await s.execute(text("UPDATE items SET study_mode = 'general' WHERE subject_id IN (SELECT id FROM subjects WHERE has_practical = FALSE)"))
+        # Repair legacy content classifications on every startup. This only updates fields;
+        # it never deletes users, subjects, items, or attachments.
+        await s.execute(text("UPDATE items SET study_mode = 'practical' WHERE section_id IN (SELECT id FROM sections WHERE slug = 'practical')"))
+        await s.execute(text("UPDATE items SET study_mode = 'theory' WHERE study_mode = 'general' AND subject_id IN (SELECT id FROM subjects WHERE has_practical = TRUE)"))
+        await s.execute(text("UPDATE items SET study_mode = 'general' WHERE subject_id IN (SELECT id FROM subjects WHERE has_practical = FALSE)"))
         practical_section_id=await s.scalar(select(Section.id).where(Section.slug=="practical")); lecture_section_id=await s.scalar(select(Section.id).where(Section.slug=="lectures"))
         if practical_section_id and lecture_section_id: await s.execute(update(Item).where(Item.section_id==practical_section_id).values(section_id=lecture_section_id))
         for k,v in DEFAULT_SETTINGS.items():

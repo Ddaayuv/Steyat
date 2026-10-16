@@ -10,7 +10,7 @@ from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefaul
 from .backup import backup_loop
 from .config import runtime, settings
 from .db import init_db
-from .handlers import admin, user
+from .handlers import admin, user, quiz
 from .middlewares import DbMiddleware, MembershipMiddleware, ThrottleMiddleware
 
 
@@ -31,12 +31,14 @@ async def main() -> None:
             observer.outer_middleware(MembershipMiddleware())
 
         dp.include_router(admin.router)
+        dp.include_router(quiz.router)
         dp.include_router(user.router)
 
         public_commands = [
             BotCommand(command="start", description="بدء استخدام الأكاديمية"),
             BotCommand(command="menu", description="القائمة الرئيسية"),
             BotCommand(command="search", description="بحث في المحاضرات"),
+            BotCommand(command="myquizzes", description="اختباراتي المحفوظة"),
         ]
         await bot.set_my_commands(public_commands, scope=BotCommandScopeDefault())
         owner_commands = public_commands + [

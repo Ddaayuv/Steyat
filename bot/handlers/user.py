@@ -14,13 +14,13 @@ class SearchInput(StatesGroup): term=State()
 def _two_columns(buttons): return [buttons[i:i+2] for i in range(0,len(buttons),2)]
 def subjects_kb(rows, developer=False):
     buttons=[InlineKeyboardButton(text=f"{s.emoji} {s.name_ar}",callback_data=f"sub:{s.id}") for s in rows]
-    k=_two_columns(buttons); k.append([InlineKeyboardButton(text="🔎 بحث في المحاضرات",callback_data="search")])
+    k=_two_columns(buttons); k.append([InlineKeyboardButton(text="🔎 بحث في المحاضرات",callback_data="search"), InlineKeyboardButton(text="🤖 إنشاء اختبار",callback_data="quiz:start")])
     if developer:k.append([InlineKeyboardButton(text="🛠 لوحة المطوّر",callback_data="adm:panel")])
     return InlineKeyboardMarkup(inline_keyboard=k)
 async def show_home(m,session,user_id=None):
     uid=user_id if user_id is not None else m.from_user.id
     rows=(await session.scalars(select(Subject).where(Subject.is_active.is_(True)).order_by(Subject.sort_order,Subject.id))).all()
-    if not rows:return await m.answer("📚 لا توجد مواد متاحة حالياً.")
+    if not rows:return await m.answer("📚 لا توجد مواد متاحة حالياً.",reply_markup=subjects_kb([],uid in settings.owner_ids))
     await m.answer("🎓 <b>المواد الدراسية 📚</b>\n\nاختر المادة:",reply_markup=subjects_kb(rows,uid in settings.owner_ids))
 @router.message(CommandStart())
 async def start(m,session):
