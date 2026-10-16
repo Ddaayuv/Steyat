@@ -121,10 +121,11 @@ async def manager_open(cb: CallbackQuery, session):
 async def manager_toggle(cb: CallbackQuery, session):
     if not _owner(cb.from_user.id):
         return await cb.answer("ممنوع", show_alert=True)
-    parts = cb.data.split(":", 4)
-    if len(parts) != 5:
+    # Callback format is: btnmgr:toggle:<menu_key>:<button_key>
+    parts = cb.data.split(":", 3)
+    if len(parts) != 4:
         return await cb.answer("الزر غير معروف", show_alert=True)
-    menu_key, key = parts[3], parts[4]
+    menu_key, key = parts[2], parts[3]
     if menu_key not in MENU_TITLES:
         return await cb.answer("القائمة غير معروفة", show_alert=True)
     hidden = await hidden_keys(session, menu_key)
