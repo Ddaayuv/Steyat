@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from ..config import settings
-from ..db import Subject, Section, Item, get_setting, is_linux_basics_subject
+from ..db import Subject, Section, Item, get_setting
 from ..utils import esc, normalize
 from ..menu_buttons import build_menu_markup
 
@@ -81,11 +81,11 @@ async def mode(cb,session):
     await show_sections(cb,sid,study_mode,session)
 async def show_sections(event,sid,study_mode,session):
     subject_row = await session.get(Subject, sid)
-    if subject_row and is_linux_basics_subject(subject_row):
-        # Linux Basics: show the single requested section in both theory and practical.
+    if subject_row and subject_row.has_practical:
+        # Every subject supporting theory + practical shows only Lectures in both modes.
         section_order = ("lectures",)
     else:
-        # Keep the original section choices for all other subjects.
+        # Keep the existing menu for subjects that do not use both modes.
         section_order = ("lectures","files","practical") if study_mode=="practical" else ("lectures","files","questions")
     result=(await session.scalars(select(Section).where(Section.slug.in_(section_order)))).all()
     by_slug={x.slug:x for x in result}
@@ -98,8 +98,8 @@ async def section(cb,session):
     try:_,sid,study_mode,section_id=cb.data.split(":"); sid=int(sid); section_id=int(section_id)
     except Exception:return await cb.answer("الاختيار غير صحيح",show_alert=True)
     subject_row = await session.get(Subject, sid)
-    if subject_row and is_linux_basics_subject(subject_row):
-        # Reject stale inline buttons for Files/Questions from messages sent before this update.
+    if subject_row and subject_row.has_practical:
+        # Reject stale Files/Questions buttons for every theory + practical subject.
         allowed_slugs = {"lectures"}
     else:
         allowed_slugs = {"lectures","files","practical"} if study_mode=="practical" else {"lectures","files","questions"}
