@@ -87,6 +87,19 @@ class BotSetting(Base):
     value: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
+class MenuButton(Base):
+    __tablename__ = "menu_buttons"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    menu_key: Mapped[str] = mapped_column(String(40), index=True)
+    label: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(40))
+    value: Mapped[str] = mapped_column(Text, default="")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[int] = mapped_column(BigInteger, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Quiz(Base):
     __tablename__ = "quizzes"
     id: Mapped[int] = mapped_column(primary_key=True)

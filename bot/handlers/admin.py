@@ -9,11 +9,13 @@ from ..config import settings
 from ..db import User, Subject, Section, Item, BotSetting, audit, set_setting, setting_enabled, create_item, slugify, build_search_text
 from ..utils import esc, is_url
 import asyncio
+from .menu_manager import router as menu_manager_router
 from datetime import datetime, timedelta
 router=Router()
+router.include_router(menu_manager_router)
 def owner(uid): return uid in settings.owner_ids
 def grid(buttons,w=2): return [buttons[i:i+w] for i in range(0,len(buttons),w)]
-def panel_kb(): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📊 الإحصائيات",callback_data="adm:stats"),InlineKeyboardButton(text="👥 المستخدمون",callback_data="adm:users")],[InlineKeyboardButton(text="➕ إضافة محتوى",callback_data="adm:add"),InlineKeyboardButton(text="📚 إدارة المواد",callback_data="adm:subjects")],[InlineKeyboardButton(text="📢 إذاعة",callback_data="adm:broadcast"),InlineKeyboardButton(text="⚙️ الإعدادات",callback_data="adm:settings")],[InlineKeyboardButton(text="🔒 الاشتراك الإجباري",callback_data="adm:forcesub"),InlineKeyboardButton(text="🔔 إشعارات الأعضاء",callback_data="adm:alerts")],[InlineKeyboardButton(text="📣 السماح بالإذاعة",callback_data="adm:announce"),InlineKeyboardButton(text="📖 عرض المواد",callback_data="adm:home")],[InlineKeyboardButton(text="🤖 إنشاء اختبار",callback_data="quiz:start")]])
+def panel_kb(): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📊 الإحصائيات",callback_data="adm:stats"),InlineKeyboardButton(text="👥 المستخدمون",callback_data="adm:users")],[InlineKeyboardButton(text="➕ إضافة محتوى",callback_data="adm:add"),InlineKeyboardButton(text="📚 إدارة المواد",callback_data="adm:subjects")],[InlineKeyboardButton(text="📢 إذاعة",callback_data="adm:broadcast"),InlineKeyboardButton(text="⚙️ الإعدادات",callback_data="adm:settings")],[InlineKeyboardButton(text="🔒 الاشتراك الإجباري",callback_data="adm:forcesub"),InlineKeyboardButton(text="🔔 إشعارات الأعضاء",callback_data="adm:alerts")],[InlineKeyboardButton(text="📣 السماح بالإذاعة",callback_data="adm:announce"),InlineKeyboardButton(text="📖 عرض المواد",callback_data="adm:home")],[InlineKeyboardButton(text="🤖 إنشاء اختبار",callback_data="quiz:start"),InlineKeyboardButton(text="⚙️ إدارة الأزرار",callback_data="adm:buttons")]])
 def back_panel(): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ لوحة المطوّر",callback_data="adm:panel")]])
 class AddContent(StatesGroup): subject=State(); mode=State(); section=State(); title=State(); description=State(); attachments=State()
 class AddSubject(StatesGroup): meta=State()

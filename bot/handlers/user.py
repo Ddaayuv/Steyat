@@ -8,6 +8,7 @@ from sqlalchemy import select
 from ..config import settings
 from ..db import Subject, Section, Item, get_setting
 from ..utils import esc, normalize
+from ..menu_buttons import build_menu_markup
 
 router=Router()
 class SearchInput(StatesGroup): term=State()
@@ -20,8 +21,12 @@ def subjects_kb(rows, developer=False):
 async def show_home(m,session,user_id=None):
     uid=user_id if user_id is not None else m.from_user.id
     rows=(await session.scalars(select(Subject).where(Subject.is_active.is_(True)).order_by(Subject.sort_order,Subject.id))).all()
-    if not rows:return await m.answer("📚 لا توجد مواد متاحة حالياً.",reply_markup=subjects_kb([],uid in settings.owner_ids))
-    await m.answer("🎓 <b>المواد الدراسية 📚</b>\n\nاختر المادة:",reply_markup=subjects_kb(rows,uid in settings.owner_ids))
+    entries=[{"key":f"subject_{s.id}","text":f"{s.emoji} {s.name_ar}","callback":f"sub:{s.id}"} for s in rows]
+    entries += [{"key":"search","text":"🔎 بحث في المحاضرات","callback":"search"},{"key":"quiz","text":"🤖 إنشاء اختبار","callback":"quiz:start"}]
+    if uid in settings.owner_ids: entries.append({"key":"admin_panel","text":"🛠 لوحة المطوّر","callback":"adm:panel","admin_only":True})
+    markup=await build_menu_markup(session,"main",entries,uid,columns=2)
+    if not rows:return await m.answer("📚 لا توجد مواد متاحة حالياً.",reply_markup=markup)
+    await m.answer("🎓 <b>المواد الدراسية 📚</b>\n\nاختر المادة:",reply_markup=markup)
 @router.message(CommandStart())
 async def start(m,session):
     if m.from_user.id in settings.owner_ids:
